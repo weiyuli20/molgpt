@@ -1,0 +1,10 @@
+.venv/
+wandb/
+swanlog/
+scripts/__pycache__/
+datasets/moses2.csv
+pycache/
+datasets/
+__pycache__/
+*.py[cod]
+.DS_Store

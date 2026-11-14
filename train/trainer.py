@@ -13,10 +13,9 @@ import torch
 import torch.optim as optim
 from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.data.dataloader import DataLoader
-from torch.cuda.amp import GradScaler
+from contextlib import nullcontext
 
-from utils import check_novelty, sample, canonic_smiles
-from moses.utils import get_mol
+from utils import check_novelty, sample, canonic_smiles, get_mol
 import re
 import pandas as pd
 from rdkit import Chem
@@ -52,15 +51,15 @@ class Trainer:
         self.test_dataset = test_dataset
         self.config = config
 
-        # take over whatever gpus are on the system
-        self.device = 'cpu'
         self.stoi = stoi
         self.itos = itos
-
         if torch.cuda.is_available():
-            self.device = torch.cuda.current_device()
-            # self.model = torch.nn.DataParallel(self.model).to(self.device)
-            self.model = self.model.to(self.device)
+            self.device = torch.device('cuda', torch.cuda.current_device())
+        elif torch.backends.mps.is_available():
+            self.device = torch.device('mps')
+        else:
+            self.device = torch.device('cpu')
+        self.model = self.model.to(self.device)
 
     def save_checkpoint(self):
         # DataParallel wrappers keep raw model object in .module attribute
@@ -68,11 +67,12 @@ class Trainer:
         logger.info("saving %s", self.config.ckpt_path)
         torch.save(raw_model.state_dict(), self.config.ckpt_path)
 
-    def train(self, wandb):
+    def train(self, experiment_logger):
         model, config = self.model, self.config
         raw_model = model.module if hasattr(self.model, "module") else model
         optimizer = raw_model.configure_optimizers(config)
-        scaler = GradScaler()
+        use_amp = self.device.type == 'cuda'
+        scaler = torch.amp.GradScaler('cuda', enabled=use_amp)
 
         # [' ', '#', '(', ')', '-', '1', '2', '3', '4', '5', '6', '<', '=', 'B', 'C', 'F', 'H', 'N', 'O', 'S', '[', ']', 'c', 'l', 'n', 'o', 'r', 's']
         # ['#', '(', ')', '-', '1', '2', '3', '4', '5', '6', '<', '=', 'Br', 'C', 'Cl', 'F', 'N', 'O', 'S', '[H]', '[nH]', 'c', 'n', 'o', 's']
@@ -82,7 +82,7 @@ class Trainer:
             is_train = split == 'train'
             model.train(is_train)
             data = self.train_dataset if is_train else self.test_dataset
-            loader = DataLoader(data, shuffle=True, pin_memory=True,
+            loader = DataLoader(data, shuffle=True, pin_memory=use_amp,
                                 batch_size=config.batch_size,
                                 num_workers=config.num_workers)
 
@@ -97,7 +97,7 @@ class Trainer:
                 scaffold = scaffold.to(self.device) 
 
                 # forward the model
-                with torch.cuda.amp.autocast():
+                with torch.amp.autocast('cuda') if use_amp else nullcontext():
                     with torch.set_grad_enabled(is_train):
                         logits, loss, _ = model(x, y, p, scaffold)
                         loss = loss.mean() # collapse all losses if they are scattered on multiple gpus
@@ -115,7 +115,7 @@ class Trainer:
 
                     # decay the learning rate based on our progress
                     if config.lr_decay:
-                        self.tokens += (y >= 0).sum() # number of tokens processed this step (i.e. label is not -100)
+                        self.tokens += (y >= 0).sum().item() # number of tokens processed this step (i.e. label is not -100)
                         if self.tokens < config.warmup_tokens:
                             # linear warmup
                             lr_mult = float(self.tokens) / float(max(1, config.warmup_tokens))
@@ -130,7 +130,7 @@ class Trainer:
                         lr = config.learning_rate
 
                     # report progress
-                    wandb.log({'step_train_loss': loss, 'train_step': it + epoch*len(loader), 'learning_rate': lr})
+                    experiment_logger.log({'step_train_loss': loss.item(), 'train_step': it + epoch*len(loader), 'learning_rate': lr})
                     pbar.set_description(f"epoch {epoch+1} iter {it}: train loss {loss.item():.5f}. lr {lr:e}")
     
             if is_train:
@@ -151,7 +151,7 @@ class Trainer:
             if self.test_dataset is not None:
                 test_loss = run_epoch('test')
 
-            wandb.log({'epoch_valid_loss': test_loss, 'epoch_train_loss': train_loss, 'epoch': epoch + 1})
+            experiment_logger.log({'epoch_valid_loss': test_loss, 'epoch_train_loss': train_loss, 'epoch': epoch + 1})
 
             # supports early stopping based on the test loss, or just save always if no test set is provided
             good_model = self.test_dataset is None or test_loss < best_loss
@@ -165,7 +165,7 @@ class Trainer:
                 regex = re.compile(pattern)
                 context = "C"
                 for i in range(2):
-                    x = torch.tensor([self.stoi[s] for s in regex.findall(context)], dtype=torch.long)[None,...].repeat(512, 1).to('cuda')
+                    x = torch.tensor([self.stoi[s] for s in regex.findall(context)], dtype=torch.long)[None,...].repeat(512, 1).to(self.device)
                     p = None
                     sca = None
                     y = sample(model, x, self.config.block_size, temperature=0.8, sample=True, top_k=10, prop = p, scaffold = sca)

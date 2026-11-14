@@ -7,6 +7,16 @@ import re
 class SmileDataset(Dataset):
 
     def __init__(self, args, data, content, block_size, aug_prob = 0.5, prop = None, scaffold = None, scaffold_maxlen = None):
+        '''
+        Args:
+            data:  smiles
+            content: 词表
+            block_size: int, the maximum length of  tokenized smiles sequences
+            aug_prob: float, the probability of applying SMILES augmentation
+            prop: pd.Series or np.ndarray, the properties corresponding to each smiles
+            scaffold: pd.Series or np.ndarray, the scaffolds corresponding to each smiles
+            scaffold_maxlen: int, the maximum length of scaffold sequences
+        '''
         chars = sorted(list(set(content)))
         data_size, vocab_size = len(data), len(chars)
         print('data has %d smiles, %d unique characters.' % (data_size, vocab_size))
@@ -34,6 +44,10 @@ class SmileDataset(Dataset):
         smiles = smiles.strip()
         scaffold = scaffold.strip()
 
+
+        '''
+        一个smiles分子式可能有多个有效的表示形式，SMILES增强技术通过随机化SMILES字符串的顺序来生成不同的表示形式，从而增加训练数据的多样性。aug_prob参数控制了应用SMILES增强的概率。
+        '''
         p = np.random.uniform()
         if p < self.aug_prob:
             smiles = self.tfm.randomize_smiles(smiles)

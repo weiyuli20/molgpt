@@ -2,13 +2,12 @@ import pandas as pd
 import argparse
 from utils import set_seed
 import numpy as np
-import wandb
+import swanlab
 
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from torch.nn import functional as F
-from torch.cuda.amp import GradScaler
 
 from model import GPT, GPTConfig
 from trainer import Trainer, TrainerConfig
@@ -21,7 +20,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
     parser.add_argument('--run_name', type=str,
-                        help="name for wandb run", required=False)
+                        help="name for SwanLab experiment", required=False)
     parser.add_argument('--debug', action='store_true',
                         default=False, help='debug')
     # in moses dataset, on average, there are only 5 molecules per scaffold
@@ -51,11 +50,14 @@ if __name__ == '__main__':
     parser.add_argument('--lstm_layers', type=int, default=0,
                         help="number of layers in lstm", required=False)
 
+    parser.add_argument('--swanlab_mode', choices=['online', 'offline', 'disabled'],
+                        default='online', help='SwanLab logging mode')
     args = parser.parse_args()
 
     set_seed(42)
 
-    wandb.init(project="lig_gpt", name=args.run_name)
+    swanlab.init(project="lig_gpt", experiment_name=args.run_name, config=vars(args),
+                 mode=args.swanlab_mode)
 
     data = pd.read_csv('datasets/' + args.data_name + '.csv')
     data = data.dropna(axis=0).reset_index(drop=True)
@@ -93,6 +95,7 @@ if __name__ == '__main__':
     scaffold = train_data['scaffold_smiles']
     vscaffold = val_data['scaffold_smiles']
 
+    #定义smiles分词规则
     pattern = "(\[[^\]]+]|<|Br?|Cl?|N|O|S|P|F|I|b|c|n|o|s|p|\(|\)|\.|=|#|-|\+|\\\\|\/|:|~|@|\?|>|\*|\$|\%[0-9]{2}|[0-9])"
     regex = re.compile(pattern)
 
@@ -135,6 +138,9 @@ if __name__ == '__main__':
                             num_workers=10, ckpt_path=f'../cond_gpt/weights/{args.run_name}.pt', block_size=train_dataset.max_len, generate=False)
     trainer = Trainer(model, train_dataset, valid_dataset,
                         tconf, train_dataset.stoi, train_dataset.itos)
-    df = trainer.train(wandb)
-
-    df.to_csv(f'{args.run_name}.csv', index=False)
+    try:
+        df = trainer.train(swanlab)
+        if df is not None:
+            df.to_csv(f'{args.run_name}.csv', index=False)
+    finally:
+        swanlab.finish()

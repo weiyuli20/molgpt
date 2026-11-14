@@ -3,7 +3,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
-from moses.utils import get_mol
 from rdkit import Chem
    
 import numpy as np
@@ -20,6 +19,24 @@ def top_k_logits(logits, k):
     out = logits.clone()
     out[out < v[:, [-1]]] = -float('Inf')
     return out
+
+def get_mol(smiles_or_mol):
+    if isinstance(smiles_or_mol, str):
+        if not smiles_or_mol:
+            return None
+
+        mol = Chem.MolFromSmiles(smiles_or_mol)
+        if mol is None:
+            return None
+
+        try:
+            Chem.SanitizeMol(mol)
+        except ValueError:
+            return None
+
+        return mol
+
+    return smiles_or_mol
 
 @torch.no_grad()
 def sample(model, x, steps, temperature=1.0, sample=False, top_k=None, prop = None, scaffold = None):
