@@ -1,5 +1,6 @@
 import pandas as pd
 import argparse
+from pathlib import Path
 from utils import set_seed
 import numpy as np
 import swanlab
@@ -135,7 +136,7 @@ if __name__ == '__main__':
 
     tconf = TrainerConfig(max_epochs=args.max_epochs, batch_size=args.batch_size, learning_rate=args.learning_rate,
                             lr_decay=True, warmup_tokens=0.1*len(train_data)*max_len, final_tokens=args.max_epochs*len(train_data)*max_len,
-                            num_workers=10, ckpt_path=f'../cond_gpt/weights/{args.run_name}.pt', block_size=train_dataset.max_len, generate=False)
+                            num_workers=10, ckpt_path=str(Path(__file__).resolve().parents[1] / 'weights' / f'{args.run_name}.pt'), block_size=train_dataset.max_len, generate=False)
     trainer = Trainer(model, train_dataset, valid_dataset,
                         tconf, train_dataset.stoi, train_dataset.itos)
     try:

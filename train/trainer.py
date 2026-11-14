@@ -5,6 +5,7 @@ so nothing in this file really has anything to do with GPT specifically.
 
 import math
 import logging
+from pathlib import Path
 
 from tqdm import tqdm
 import numpy as np
@@ -65,7 +66,9 @@ class Trainer:
         # DataParallel wrappers keep raw model object in .module attribute
         raw_model = self.model.module if hasattr(self.model, "module") else self.model
         logger.info("saving %s", self.config.ckpt_path)
-        torch.save(raw_model.state_dict(), self.config.ckpt_path)
+        checkpoint_path = Path(self.config.ckpt_path)
+        checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+        torch.save(raw_model.state_dict(), checkpoint_path)
 
     def train(self, experiment_logger):
         model, config = self.model, self.config
